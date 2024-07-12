@@ -20,10 +20,10 @@ ON Customers.CustomerID = Orders.CustomerID
 WHERE Orders.CustomerID IS NULL;
 
 Задание 11.5.2
-SELECT 'Customer' As Type, ContactName, City, Region
+SELECT 'Customer' As Type, ContactName, City, Country
 FROM Customers
 UNION
-SELECT 'Supplier' As Type, ContactName, City, Region
+SELECT 'Supplier' As Type, ContactName, City, Country
 FROM Suppliers
 ORDER BY Type;
 
