@@ -1,6 +1,6 @@
 Решение задания 15.7:
 
-Сначала создаем таблицу Regions как было в теоретической части
+Сначала создаем таблицу Region как было в теоретической части
 (со структурой, аналогичной таблице Region из базы Northwind):
 CREATE TABLE Region (
     RegionID int NOT NULL,
@@ -25,7 +25,7 @@ VALUES ('3', 'Northern');
 INSERT INTO Region (RegionID, RegionDescription)
 VALUES ('4', 'Southern');
 
-Делаем PK_Territory в таблице Territories и PK_Region в таблице Regions, через Design.
+Делаем PK_Territory в таблице Territories и PK_Region в таблице Region, через Design.
 Также добавил внешний ключ FK_Territories_RegionID для таблицы Territories через установку ключей в таблице.
 
 INSERT INTO Territories (TerritoryID, TerritoryDescription, RegionID)
