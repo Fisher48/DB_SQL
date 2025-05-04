@@ -36,7 +36,7 @@ GROUP BY s.squad_id, s.name;
 SELECT d.profession, COUNT(t.task_id) AS tasks_count
 FROM dwarves d
 JOIN tasks t ON t.assigned_to = d.dwarf_id
-WHERE status IN ('pending', 'in_progress')
+WHERE t.status IN ('pending', 'in_progress')
 GROUP BY d.profession
 ORDER BY tasks_count DESC LIMIT 1;
 
