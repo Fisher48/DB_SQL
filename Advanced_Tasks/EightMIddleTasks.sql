@@ -33,12 +33,16 @@ GROUP BY s.squad_id, s.name;
 
 
 6. Получить список профессий с наибольшим количеством незавершённых задач ("pending" и "in_progress") у гномов этих профессий.
-SELECT d.profession, COUNT(t.task_id) AS tasks_count
-FROM dwarves d
-JOIN tasks t ON t.assigned_to = d.dwarf_id
-WHERE t.status IN ('pending', 'in_progress')
-GROUP BY d.profession
-ORDER BY tasks_count DESC LIMIT 1;
+WITH profession_tasks AS (
+    SELECT d.profession, COUNT(t.task_id) AS tasks_count
+    FROM dwarves d
+    JOIN tasks t ON t.assigned_to = d.dwarf_id
+    WHERE t.status IN ('pending', 'in_progress')
+    GROUP BY d.profession
+)
+SELECT profession, tasks_count
+FROM profession_tasks
+WHERE tasks_count = (SELECT MAX(tasks_count) FROM profession_tasks);
 
 
 7. Для каждого типа предметов узнать средний возраст гномов, владеющих этими предметами.
