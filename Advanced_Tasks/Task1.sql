@@ -7,75 +7,110 @@
 - Успешность встреч с существами (отношение благоприятных исходов к неблагоприятным)
 - Опыт, полученный участниками (сравнение навыков до и после)
 
+Решение:
 
+-- Соотношение выживших участников к общему числу
+WITH survival_rate AS (
+    SELECT em.expedition_id,
+    ROUND (100.0 * COUNT(*) FILTER (WHERE survived) / COUNT(*), 2) AS survival_rate)
+    FROM expedition_members em
+    GROUP BY em.expedition_id
+),
+
+-- Ценность найденных артефактов
+artifacts AS (
+    SELECT ea.expedition_id, SUM(value) AS artifacts_value
+    FROM expedition_artifacts ea
+    GROUP BY ea.expedition_id
+),
+
+-- Количество обнаруженных новых мест
+discovered_sites AS (
+    SELECT es.expedition_id, COUNT(site_id) AS discovered_sites
+    FROM expedition_sites es
+    GROUP BY es.expedition_id
+),
+
+-- Успешность встреч с существами (отношение благоприятных исходов к неблагоприятным)
+encounter_success_rate AS (
+    SELECT ec.expedition_id,
+    ROUND(100.0 * COUNT(*) FILTER (WHERE outcome = 'favorable') / COUNT(*), 2) AS encounter_success_rate
+    FROM expedition_creatures ec
+    GROUP BY ec.expedition_id
+),
+
+-- Опыт участников до экспедиции
+skill_before AS (
+    SELECT em.expedition_id, em.dwarf_id, SUM(ds.experience) AS experience_before
+    FROM expedition_members em
+    JOIN dwarf_skills ds ON em.dwarf_id = ds.dwarf_id
+    WHERE em.return_date IS NULL
+    GROUP BY em.expedition_id, em.dwarf_id
+),
+
+-- Опыт участников после экспедиции
+skill_after AS (
+    SELECT em.expedition_id, em.dwarf_id, SUM(ds.experience) AS experience_after
+    FROM expedition_members em
+    JOIN dwarf_skills ds ON em.dwarf_id = ds.dwarf_id
+    WHERE em.return_date IS NOT NULL
+    GROUP BY em.expedition_id, em.dwarf_id
+),
+
+-- Сравнение навыков до и после
+skill_gained AS (
+    SELECT sa.expedition_id,
+    ROUND(AVG(sa.experience_after - sb.experience_before), 1) AS skill_improvement
+    FROM skill_before sb
+    JOIN skill_after sa
+    ON sa.expedition_id = sb.expedition_id AND sa.dwarf_id = sb.dwarf_id
+    GROUP BY sa.expedition_id
+)
+
+-- Основной запрос
 SELECT
    e.expedition_id,
    e.destination,
    e.status,
-    ROUND ( ((SELECT COUNT(em.survived) * 100.0 AS survival
-     FROM expedition_members em
-     WHERE e.expedition_id = em.expedition_id AND survived = TRUE) /
-     (SELECT COUNT(*) AS overall
-      FROM expedition_members em
-      WHERE e.expedition_id = em.expedition_id)), 2) AS survival_rate,
-
-    (SELECT SUM(value) AS artifacts_value
-     FROM expedition_artifacts ea
-     WHERE e.expedition_id = ea.expedition_id) AS artifacts_value,
-
-    (SELECT COUNT(site_id)
-     FROM expedition_sites es
-     WHERE e.expedition_id = es.expedition_id) AS discovered_sites,
-
-    ROUND ( ((SELECT COUNT(outcome) * 100.0
-     FROM expedition_creatures ec
-     WHERE e.expedition_id = ec.expedition_id AND outcome = 'favorable') /
-    (SELECT COUNT(*)
-     FROM expedition_creatures ec
-     WHERE e.expedition_id = ec.expedition_id)), 2) AS encounter_success_rate,
-
-    ((SELECT level
-     FROM dwarf_skills ds
-     JOIN expedition_members em ON em.dwarf_id = ds.dwarf_id
-     JOIN expeditions e ON e.expedition_id = em.expedition_id
-     WHERE ds.dwarf_id = em.dwarf_id AND em.return_date IS NULL) /
-     (SELECT level
-      FROM dwarf_skills ds
-      JOIN expedition_members em ON em.dwarf_id = ds.dwarf_id
-      JOIN expeditions e ON e.expedition_id = em.expedition_id
-      WHERE ds.dwarf_id = em.dwarf_id AND em.return_date IS NOT NULL)) AS skill_improvement,
-
-     (e.return_date - e.departure_date) AS expedition_duration,
-
-     (SELECT
-        survival_rate / 10,
-        artifacts_value / 1000,
-        discovered_sites,
-        skill_improvement / 10,
-        encounter_success_rate / 10
-      FROM
-        expeditions e) AS overall_success_score,
-
-     JSON_BUILD_OBJECT (
-             'member_ids', (
-                 SELECT JSON_AGG(em.dwarf_id)
-                 FROM expedition_members em
-                 WHERE e.expedition_id = em.expedition_id
-             ),
-             'artifact_ids', (
-                 SELECT JSON_AGG(ea.artifact_id)
-                 FROM expedition_artifacts ea
-                 WHERE e.expedition_id = ea.expedition_id
-             ),
-             'site_ids', (
-                 SELECT JSON_AGG(es.site_id)
-                 FROM expedition_sites es
-                 WHERE e.expedition_id = es.expedition_id
-             )
-     ) AS related_entities
-FROM
-  expeditions e;
-
+   sr.survival_rate,
+   COALESCE(a.artifacts_value, 0) AS artifacts_value,
+   COALESCE(ds.discovered_sites, 0) AS discovered_sites,
+   COALESCE(er.encounter_success_rate, 0) AS encounter_success_rate,
+   COALESCE(sg.skill_improvement, 0) AS skill_improvement,
+   (e.return_date - e.departure_date) AS expedition_duration,
+   (ROUND(
+      COALESCE(sr.survival_rate, 0) / 10 +
+      COALESCE(a.artifacts_value, 0) / 1000 +
+      COALESCE(ds.discovered_sites, 0) / 10 +
+      COALESCE(sg.skill_improvement, 0) / 10 +
+      COALESCE(er.encounter_success_rate, 0) / 10,
+      2
+   ) AS overall_success_score,
+   JSON_BUILD_OBJECT (
+         'member_ids', (
+             SELECT JSON_AGG(em.dwarf_id)
+             FROM expedition_members em
+             WHERE e.expedition_id = em.expedition_id
+         ),
+         'artifact_ids', (
+             SELECT JSON_AGG(ea.artifact_id)
+             FROM expedition_artifacts ea
+             WHERE e.expedition_id = ea.expedition_id
+         ),
+         'site_ids', (
+             SELECT JSON_AGG(es.site_id)
+             FROM expedition_sites es
+             WHERE e.expedition_id = es.expedition_id
+         )
+   ) AS related_entities
+FROM expeditions e
+LEFT JOIN survival_rate sr ON e.expedition_id = sr.expedition_id
+LEFT JOIN artifacts a ON e.expedition_id = a.expedition_id
+LEFT JOIN discovered_sites ds ON e.expedition_id = ds.expedition_id
+LEFT JOIN encounter_success_rate er ON e.expedition_id = er.expedition_id
+LEFT JOIN skill_gained sg ON e.expedition_id = sg.expedition_id
+WHERE e.status = 'Completed'
+ORDER BY overall_success_score DESC;
 
 
 
