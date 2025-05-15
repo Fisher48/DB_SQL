@@ -20,7 +20,8 @@ WITH workshop_stats AS (
         SUM(p.value * wp.quantity) AS total_production_value,
         MIN(wp.production_date) AS first_production_date,
         MAX(wp.production_date) AS last_production_date,
-        COUNT(DISTINCT wp.production_date) AS actual_product_days
+        COUNT(DISTINCT wp.production_date) AS actual_product_days,
+        SUM(wm.quantity) AS total_material_quantity
     FROM workshops w
     LEFT JOIN workshop_craftsdwarves wcd ON wcd.workshop_id = w.workshop_id
     LEFT JOIN workshop_products wp ON wp.workshop_id = w.workshop_id
@@ -29,14 +30,22 @@ WITH workshop_stats AS (
     GROUP BY w.workshop_id, w.name, w.type
 ),
 
-workshop_period_stats (
+workshop_period_stats AS (
     SELECT
         ws.workshop_id,
-        EXTRACT(DAY FROM (ws.last_production_date - ws.first_production_date)) AS total_days,
+        EXTRACT(DAY FROM (ws.last_production_date - ws.first_production_date))
+            AS total_days,
         ws.actual_product_days,
-        ROUND(ws.total_quantity_produced / NULLIF(EXTRACT(DAY FROM (ws.last_production_date - ws.first_production_date, 0), 2)) AS daily_production_rate,
-        ROUND(ws.total_production_value / NULLIF(ws.count_of_materials, 0), 2) AS value_per_material_unit,
-        ROUND(ws.actual_product_days * 100.0 / NULLIF(EXTRACT(DAY FROM (ws.last_production_date - ws.first_production_date, 0), 2)) AS workshop_utilization_percent
+        ROUND(ws.total_quantity_produced / NULLIF(EXTRACT(DAY FROM (ws.last_production_date - ws.first_production_date)), 0), 2)
+            AS daily_production_rate,
+        ROUND(ws.total_production_value / NULLIF(ws.total_material_quantity, 0), 2)
+            AS value_per_material_unit,
+        ROUND(ws.actual_product_days * 100.0 / NULLIF(EXTRACT(DAY FROM (ws.last_production_date - ws.first_production_date)), 0), 2)
+            AS workshop_utilization_percent,
+        ROUND(ws.total_quantity_produced / NULLIF(ws.total_material_quantity, 0), 2)
+            AS material_conversion_ratio,
+        (EXTRACT(DAY FROM (ws.last_production_date - ws.first_production_date) - ws.actual_product_days))
+            AS downtime_days
     FROM
         workshop_stats ws
     GROUP BY ws.workshop_id
@@ -49,9 +58,8 @@ craftsdwarf_skills AS (
         CORR(ds.level, p.value) AS skill_quality_correlation
     FROM workshop_craftsdwarves wcd
     JOIN dwarf_skills ds ON  ds.dwarf_id = wcd.dwarf_id
-    JOIN skills s ON ds.dwarf_id = s.dwarf_id
     JOIN workshop_products wp ON wp.workshop_id = wcd.workshop_id AND wp.dwarf_id = wcd.dwarf_id
-    JOIN products p ON p.workshop_id = w.workshop_id
+    JOIN products p ON p.workshop_id = wp.workshop_id
     GROUP BY wcd.workshop_id
 )
 
@@ -65,12 +73,10 @@ SELECT
     wps.daily_production_rate,
     wps.value_per_material_unit,
     wps.workshop_utilization_percent,
+    wps.downtime_days,
+    wps.material_conversion_ratio,
     cs.average_craftsdwarf_skill,
     cs.skill_quality_correlation,
-    ROUND(ws.total_production_value / NULLIF(ws.total_quantity_produced, 0), 2)
-        AS material_conversion_ratio,
-  --  EXTRACT(DAY FROM(ws.actual_product_days - ws.first_production_date)) / NULLIF(wps.total_days, 0)
-  --    AS workshop_downtime,
     JSON_BUILD_OBJECT (
              'craftsdwarf_ids', (
                  SELECT JSON_AGG(DISTINCT wc.dwarf_id)
