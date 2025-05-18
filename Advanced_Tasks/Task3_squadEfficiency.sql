@@ -16,36 +16,48 @@ WITH squad_stats AS (
         ms.name AS squad_name,
         ms.formation_type,
         sm.dwarf_name AS leader_name,
-        AVG(e.equipment_id) AS avg_equipment_quality
+        COUNT(DISTINCT sm.dwarf_id) AS total_members_ever,
+        SUM(CASE WHEN sm.exit_date IS NULL THEN 1 ELSE 0 END) AS current_members,
+        AVG(e.quality) AS avg_equipment_quality
     FROM military_squads ms
-    LEFT JOIN squad_members sm ON ms.squad_id = sm.squad_id AND ms.leader_id = sm.dwarf_id
+    LEFT JOIN squad_members sm ON ms.squad_id = sm.squad_id
+    LEFT JOIN dwarves d ON ms.leader_id = d.dwarf_id
     LEFT JOIN squad_equipment se ON ms.squad_id = se.squad_id
     LEFT JOIN equipment e ON e.equipment_id = se.equipment_id
-
+    GROUP BY ms.squad_id, ms.name, ms.formation_type
 ),
 
-WITH battle_stats AS (
+battle_stats AS (
     SELECT
         sb.squad_id,
         COUNT(sb.report_id) AS total_battles,
-        SUM(CASE sb.report_id WHERE outcome = 'Victory' 1 ELSE 0) AS victories,
-        SUM(CASE sb.report_id WHERE outcome = 'Defeat' 1 ELSE 0) AS defeats,
-        ROUND(sb.victories::DECIMAL / NULLIF(sb.total_battles), 2) AS victory_percentage,
+        SUM(CASE WHEN outcome = 'Victory' THEN 1 ELSE 0 END) AS victories,
+        SUM(CASE WHEN outcome = 'Defeat' THEN 1 ELSE 0 END) AS defeats,
         SUM(sb.casualties) AS casualties,
         SUM(sb.enemy_casualties) AS enemy_casualties
-        COUNT(DISTINCT sb.dwarf_id) AS total_members_ever,
-        (total_members_ever - casualties) AS current_members,
     FROM squad_battles sb
+    GROUP BY sb.squad_id
 ),
 
-WITH training_stats AS (
+training_stats AS (
     SELECT
         st.squad_id,
-        COUNT(CASE st.schedule_id WHERE st.squad.id = ms.squad.id 1 ELSE 0) AS total_training_sessions,
+        COUNT(st.schedule_id) AS total_training_sessions,
         AVG(st.effectiveness) AS avg_training_effectiveness
     FROM squad_training st
-    JOIN military_squads ms ON st.squad_id = ms.squad_id
+    GROUP BY st.squad_id
+),
 
+skill_improvements AS (
+    SELECT
+        sm.squad_id,
+        SUM(CASE WHEN ds.date > sm.join_date THEN ds.level ELSE 0 END) AS current_skill_level,
+        SUM(CASE WHEN ds.date <= sm.join_date THEN ds.level ELSE 0 END) AS skill_level_before
+    FROM squad_members sm
+    JOIN dwarf_skills ds ON sm.dwarf_id = ds.dwarf_id
+    JOIN skills s ON ds.skill_id = s.skill_id
+    WHERE s.category = 'Combat'
+    GROUP BY sm.squad_id, sm.dwarf_id
 )
 
 SELECT
@@ -56,11 +68,24 @@ SELECT
     ss.avg_equipment_quality,
     bs.total_battles,
     bs.victories,
-    bs.victory_percentage,
+    bs.defeats,
+    ss.total_members_ever,
+    ss.current_members,
     bs.casualties,
-    bs.total_members_ever,
-    bs.current_members,
-    ROUND(current_members / NULLIF(total_members_ever, 0), 2) AS retention_rate,
+    ROUND(bs.victories::DECIMAL / NULLIF(bs.total_battles, 0), 2) AS victory_percentage,
+    ROUND(bs.enemy_casualties::DECIMAL / NULLIF(bs.casualties, 0), 2) AS casualty_exchange_ratio,
+    ROUND(bs.casualties::DECIMAL / NULLIF(ss.total_members_ever, 0), 2) AS casualty_rate,
+    ROUND(ss.current_members / NULLIF(ss.total_members_ever, 0), 2) AS retention_rate,
+    ts.total_training_sessions,
+    ts.avg_training_effectiveness,
+    ROUND(AVG(si.current_skill_level - si.skill_level_before), 2) AS avg_combat_skill_improvement,
+    CORR(ts.total_training_sessions, bs.victories) AS training_battle_correlation,
+    ROUND(
+        (bs.victories::DECIMAL / NULLIF(bs.total_battles, 0) * 0.35) +
+        (AVG(si.current_skill_level - si.skill_level_before) * 0.25) +
+        (ss.current_members / NULLIF(ss.total_members_ever, 0) * 0.25) +
+        ts.avg_training_effectiveness * 0.2,
+    3) AS overall_effectiveness_score,
     JSON_BUILD_OBJECT (
         'member_ids', (
             SELECT JSON_AGG(sm.dwarf_id)
@@ -87,11 +112,8 @@ FROM
     squad_stats ss
 LEFT JOIN battle_stats bs ON bs.squad_id = ss.squad_id
 LEFT JOIN training_stats ts ON ts.squad_id = ss.squad_id
-GROUP BY
-    ss.squad_id, ss.squad_name, formation_type, ss.leader_name,ss.avg_equipment_quality, bs.total_battles,
-    bs.victories, bs.victory_percentage, bs.casualties, bs.total_members_ever, bs.current_members
-ORDER BY
-    ss.victory_percentage, ss.casualty_rate, ss.retention_rate, overall_effectiveness_score;
+GROUP BY ss.squad_id, ss.squad_name, ss.formation_type
+ORDER BY overall_effectiveness_score DESC;
 
 
 
